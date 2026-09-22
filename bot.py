@@ -14,6 +14,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
 )
+from supabase import create_client, Client
 
 # --- CONFIGURACIÓN SEGURA ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -24,12 +25,17 @@ BINANCE_API_KEY = os.getenv("BINANCE_PAY_KEY")
 BINANCE_API_SECRET = os.getenv("BINANCE_PAY_SECRET")
 BINANCE_BASE_URL = "https://api.binance.com"
 
+# Credenciales de Supabase
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+# Inicializar cliente de Supabase
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
-# Base de datos simulada
-users_db = {}
 pending_orders = {} # { user_id: {"amount": float, "time": float} }
 
 # --- SERVIDOR WEB INTERNO PARA RENDER (Evita el error de puertos) ---
@@ -37,11 +43,47 @@ app_flask = Flask(__name__)
 
 @app_flask.route("/")
 def health_check():
-    return "Bot VIP Active", 200
+    return "Bot VIP Active with Supabase", 200
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
     app_flask.run(host="0.0.0.0", port=port)
+
+
+# --- FUNCIONES DE BASE DE DATOS (SUPABASE) ---
+
+def save_subscriber(user_id: int, expires_at: datetime):
+    try:
+        supabase.table("subscribers").upsert({
+            "user_id": user_id,
+            "expires_at": expires_at.isoformat(),
+            "is_active": True
+        }).execute()
+    except Exception as e:
+        logging.error(f"Error guardando usuario en Supabase: {e}")
+
+def get_subscriber(user_id: int):
+    try:
+        response = supabase.table("subscribers").select("*").eq("user_id", user_id).execute()
+        if response.data:
+            return response.data[0]
+    except Exception as e:
+        logging.error(f"Error consultando usuario en Supabase: {e}")
+    return None
+
+def update_subscriber_status(user_id: int, is_active: bool):
+    try:
+        supabase.table("subscribers").update({"is_active": is_active}).eq("user_id", user_id).execute()
+    except Exception as e:
+        logging.error(f"Error actualizando estado en Supabase: {e}")
+
+def get_all_active_subscribers():
+    try:
+        response = supabase.table("subscribers").select("*").eq("is_active", True).execute()
+        return response.data if response.data else []
+    except Exception as e:
+        logging.error(f"Error obteniendo activos de Supabase: {e}")
+        return []
 
 
 # --- CLIENTE DE BINANCE PERSONAL (SPOT API) ---
@@ -135,8 +177,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if paid:
             exp_date = datetime.now() + timedelta(days=30)
-            users_db[user_id] = {"expires_at": exp_date, "is_active": True}
-            del pending_orders[user_id]
+            
+            # Guardar en Supabase de forma persistente
+            save_subscriber(user_id, exp_date)
+            
+            if user_id in pending_orders:
+                del pending_orders[user_id]
 
             invite = await context.bot.create_chat_invite_link(
                 chat_id=VIP_CHANNEL_ID,
@@ -162,22 +208,37 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
     elif query.data == "check_status":
-        user_data = users_db.get(user_id)
-        if user_data and user_data["is_active"]:
-            exp = user_data["expires_at"].strftime('%Y-%m-%d %H:%M')
-            await query.edit_message_text(f"🟢 Suscripción **ACTIVA** hasta: `{exp}`", parse_mode="Markdown")
-        else:
-            await query.edit_message_text("🔴 No tienes una suscripción activa.")
+        sub_data = get_subscriber(user_id)
+        if sub_data and sub_data["is_active"]:
+            # Parsear la fecha de Supabase
+            exp_str = sub_data["expires_at"].replace("Z", "+00:00")
+            exp_dt = datetime.fromisoformat(exp_str)
+            
+            if datetime.now().astimezone() < exp_dt:
+                exp = exp_dt.strftime('%Y-%m-%d %H:%M')
+                await query.edit_message_text(f"🟢 Suscripción **ACTIVA** hasta: `{exp}`", parse_mode="Markdown")
+                return
+
+        await query.edit_message_text("🔴 No tienes una suscripción activa.")
 
 
 async def check_expirations(context: ContextTypes.DEFAULT_TYPE):
-    now = datetime.now()
-    for user_id, data in list(users_db.items()):
-        if data["is_active"] and now >= data["expires_at"]:
+    now = datetime.now().astimezone()
+    active_subs = get_all_active_subscribers()
+    
+    for sub in active_subs:
+        user_id = sub["user_id"]
+        exp_str = sub["expires_at"].replace("Z", "+00:00")
+        exp_dt = datetime.fromisoformat(exp_str)
+        
+        if now >= exp_dt:
             try:
                 await context.bot.ban_chat_member(chat_id=VIP_CHANNEL_ID, user_id=user_id)
                 await context.bot.unban_chat_member(chat_id=VIP_CHANNEL_ID, user_id=user_id)
-                users_db[user_id]["is_active"] = False
+                
+                # Actualizar estado en Supabase
+                update_subscriber_status(user_id, False)
+                
                 await context.bot.send_message(
                     chat_id=user_id,
                     text="⚠️ **Tu suscripción ha expirado.** Usa /start para renovar."
@@ -200,7 +261,7 @@ def main():
     if app.job_queue:
         app.job_queue.run_repeating(check_expirations, interval=600, first=10)
 
-    print("Bot personal de Binance y Telegram en marcha...")
+    print("Bot personal de Binance, Telegram y Supabase en marcha...")
     app.run_polling()
 
 
