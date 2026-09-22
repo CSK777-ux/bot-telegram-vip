@@ -123,13 +123,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
 
     if query.data == "buy_1month":
-        # Generar identificador único de transacción
         trade_no = f"TRD_{user_id}_{int(time.time())}"
-        
-        # Guardar en órdenes pendientes
         pending_orders[trade_no] = {"user_id": user_id, "days": 30}
 
-        # Solicitar checkout a la API de Binance Pay
         res = await binance_client.create_order(
             trade_no=trade_no,
             amount=20.00,
@@ -165,18 +161,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Orden no encontrada o ya procesada.")
             return
 
-        # Consultar estado real en los servidores de Binance
         res = await binance_client.query_order(trade_no)
 
         if res.get("status") == "SUCCESS" and res.get("data", {}).get("status") == "PAID":
             days = order_info["days"]
             exp_date = datetime.now() + timedelta(days=days)
 
-            # Activar usuario en DB
             users_db[user_id] = {"expires_at": exp_date, "is_active": True}
             del pending_orders[trade_no]
 
-            # Crear enlace de invitación único
             invite = await context.bot.create_chat_invite_link(
                 chat_id=VIP_CHANNEL_ID,
                 member_limit=1,
@@ -228,12 +221,15 @@ async def check_expirations(context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
+    # Se usa ApplicationBuilder y run_polling() gestionando correctamente el loop nativo
     app = ApplicationBuilder().token(BOT_TOKEN).build()
+    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
 
     # Tarea en segundo plano para expulsiones (cada 10 min)
-    app.job_queue.run_repeating(check_expirations, interval=600, first=10)
+    if app.job_queue:
+        app.job_queue.run_repeating(check_expirations, interval=600, first=10)
 
     print("Bot en marcha con Binance Pay...")
     app.run_polling()
