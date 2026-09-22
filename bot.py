@@ -5,7 +5,8 @@ import time
 import os
 from datetime import datetime, timedelta
 import httpx
-from flask import Thread, Flask
+import threading
+from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -187,7 +188,7 @@ async def check_expirations(context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     # Iniciar servidor web en segundo plano para cumplir con Render
-    t = Thread(target=run_web)
+    t = threading.Thread(target=run_web)
     t.daemon = True
     t.start()
 
