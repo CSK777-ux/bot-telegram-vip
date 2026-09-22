@@ -14,13 +14,15 @@ from telegram.ext import (
     ContextTypes,
 )
 
-# --- CONFIGURACIÓN ---
-BOT_TOKEN = "TU_TELEGRAM_BOT_TOKEN"
-VIP_CHANNEL_ID = -1001234567890  # ID numérico de tu canal (-100...)
+import os
 
-# Credenciales de Binance Pay Merchant API (obtenidas desde tu cuenta Binance Merchant)
-BINANCE_PAY_KEY = "TU_BINANCE_PAY_API_KEY"
-BINANCE_PAY_SECRET = "TU_BINANCE_PAY_SECRET_KEY"
+# --- CONFIGURACIÓN SEGURA ---
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+VIP_CHANNEL_ID = int(os.getenv("VIP_CHANNEL_ID", "0"))
+
+# Credenciales de Binance Pay
+BINANCE_PAY_KEY = os.getenv("BINANCE_PAY_KEY")
+BINANCE_PAY_SECRET = os.getenv("BINANCE_PAY_SECRET")
 BINANCE_API_URL = "https://bpay.binanceapi.com/binancepay/openapi/v2/order"
 
 logging.basicConfig(
