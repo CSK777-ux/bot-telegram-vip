@@ -110,9 +110,16 @@ class BinancePersonalClient:
         url = f"{BINANCE_BASE_URL}{endpoint}?{query_string}&signature={signature}"
         headers = {"X-MBX-APIKEY": self.api_key}
 
-        async with httpx.AsyncClient() as client:
+        proxy_url = "http://usuario:contraseña@ip_del_proxy:puerto"
+
+        async with httpx.AsyncClient(proxy=proxy_url) as client:
             try:
                 res = await client.get(url, headers=headers)
+                
+                if res.status_code == 451:
+                    logging.error("Binance bloqueó el acceso por restricciones geográficas (451).")
+                    return False
+                    
                 data = res.json()
                 if isinstance(data, list):
                     # Revisa depósitos de los últimos 15 minutos con estado 1 (Completado)
